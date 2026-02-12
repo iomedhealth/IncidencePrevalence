@@ -83,7 +83,18 @@ plotIncidence <- function(result,
     return(emptyPlot())
   }
 
-  omopgenerics::assertChoice(y, c("incidence_100000_pys", "outcome_count", "denominator_count", "person_days"))
+  if (y == "incidence_100000_pys" && !"incidence_100000_pys" %in% colnames(resultTidy)) {
+    # check for other incidence estimates
+    cols <- colnames(resultTidy)
+    inc_cols <- cols[grepl("^incidence_\\d+_pys$", cols)]
+    if (length(inc_cols) == 1) {
+       y <- inc_cols
+       if (ymin == "incidence_100000_pys_95CI_lower") ymin <- paste0(y, "_95CI_lower")
+       if (ymax == "incidence_100000_pys_95CI_upper") ymax <- paste0(y, "_95CI_upper")
+    }
+  }
+
+  # omopgenerics::assertChoice(y, c("incidence_100000_pys", "outcome_count", "denominator_count", "person_days"))
 
   plotEstimates(
     result = resultTidy,
@@ -287,9 +298,11 @@ plotPopulation <- function(result,
                            facet = NULL,
                            colour = NULL,
                            type) {
+  cols <- colnames(result)
+  inc_cols <- cols[grepl("^incidence_\\d+_pys", cols)]
   labels <- c(
     "outcome_cohort_name", "denominator_count", "outcome_count", "person_days",
-    "incidence_100000_pys", "incidence_100000_pys_95CI_lower", "incidence_100000_pys_95CI_upper",
+    inc_cols,
     "prevalence", "prevalence_95CI_lower", "prevalence_95CI_upper",
     "incidence_start_date", "incidence_end_date", "prevalence_start_date", "prevalence_end_date"
   )
@@ -417,11 +430,15 @@ plotEstimates <- function(result,
         ggplot2::scale_x_continuous(labels = scales::percent_format(accuracy = 0.1))
     }
   }
-  if (plot$labels$y == "Incidence 100000 pys") {
-    plot <- plot + ggplot2::labs(y = "Incidence (100,000 person-years)")
+  if (grepl("incidence_\\d+_pys", y, ignore.case = TRUE)) {
+     denom <- sub("incidence_(\\d+)_pys", "\\1", y)
+     denom_form <- format(as.numeric(denom), big.mark=",", scientific = FALSE)
+     plot <- plot + ggplot2::labs(y = paste0("Incidence (", denom_form, " person-years)"))
   }
-  if (plot$labels$x == "Incidence 100000 pys") {
-    plot <- plot + ggplot2::labs(x = "Incidence (100,000 person-years)")
+  if (grepl("incidence_\\d+_pys", x, ignore.case = TRUE)) {
+     denom <- sub("incidence_(\\d+)_pys", "\\1", x)
+     denom_form <- format(as.numeric(denom), big.mark=",", scientific = FALSE)
+     plot <- plot + ggplot2::labs(x = paste0("Incidence (", denom_form, " person-years)"))
   }
   if (x == "date_years") {
     plot <- plot +
