@@ -9,7 +9,7 @@ reference:
   - matches("generateDenominatorCohortSet|generateTargetDenominatorCohortSet")
 - subtitle: Estimate incidence rates
 - contents:
-  - matches("estimateIncidence")
+  - matches("estimateIncidence|estimateRollingIncidence")
 - subtitle: Estimate point and period prevalence
 - contents:
   - matches("estimatePointPrevalence|estimatePeriodPrevalence")
