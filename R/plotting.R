@@ -111,6 +111,87 @@ plotIncidence <- function(result,
   )
 }
 
+#' Plot rolling incidence results
+#'
+#' @param result Rolling incidence results
+#' @param x Variable to plot on x axis
+#' @param y Variable to plot on y axis.
+#' @param line Whether to plot a line using `geom_line`
+#' @param point Whether to plot points using `geom_point`
+#' @param ribbon Whether to plot a ribbon using `geom_ribbon`
+#' @param ymin Lower limit of error bars, if provided is plot using `geom_errorbar`
+#' @param ymax Upper limit of error bars, if provided is plot using `geom_errorbar`
+#' @param facet Variables to use for facets. To see available variables for
+#' facetting use the function `availableRollingIncidenceGrouping()`.
+#' @param colour Variables to use for colours. To see available variables for
+#' colouring use the function `availableRollingIncidenceGrouping()`.
+#'
+#' @return A ggplot with the rolling incidence results plotted
+#' @export
+#'
+plotRollingIncidence <- function(result,
+                                 x = "window_start_days",
+                                 y = "incidence_100000_pys",
+                                 line = TRUE,
+                                 point = TRUE,
+                                 ribbon = FALSE,
+                                 ymin = "incidence_100000_pys_95CI_lower",
+                                 ymax = "incidence_100000_pys_95CI_upper",
+                                 facet = NULL,
+                                 colour = NULL) {
+  rlang::check_installed("visOmopResults", version = "1.0.2")
+
+  if (nrow(result) == 0) {
+    cli::cli_warn("Empty result object")
+    return(emptyPlot())
+  }
+
+  # check if result is tidy or not
+  if (inherits(result, "summarised_result")) {
+    resultTidy <- result |>
+      tidyResult(type = "rolling_incidence", attrition = FALSE)
+  } else if (result |>
+             dplyr::pull("result_type") |>
+             unique() ==
+             "tidy_rolling_incidence") {
+    resultTidy <- result
+  } else {
+    cli::cli_abort("result must be either a summarised_result object output of
+                   the estimateRollingIncidence() function or a tidied result from the
+                   asRollingIncidenceResult() function.")
+  }
+
+  if (nrow(resultTidy) == 0) {
+    cli::cli_warn("No rolling incidence results available to plot")
+    return(emptyPlot())
+  }
+
+  if (y == "incidence_100000_pys" && !"incidence_100000_pys" %in% colnames(resultTidy)) {
+    # check for other incidence estimates
+    cols <- colnames(resultTidy)
+    inc_cols <- cols[grepl("^incidence_\\d+_pys$", cols)]
+    if (length(inc_cols) == 1) {
+       y <- inc_cols
+       if (ymin == "incidence_100000_pys_95CI_lower") ymin <- paste0(y, "_95CI_lower")
+       if (ymax == "incidence_100000_pys_95CI_upper") ymax <- paste0(y, "_95CI_upper")
+    }
+  }
+
+  plotEstimates(
+    result = resultTidy,
+    x = x,
+    y = y,
+    line = line,
+    point = point,
+    ribbon = ribbon,
+    ymin = ymin,
+    ymax = ymax,
+    facet = facet,
+    colour = colour,
+    type = "rolling_incidence"
+  )
+}
+
 #' Plot prevalence results
 #'
 #' @param result Prevalence results
@@ -380,7 +461,8 @@ plotEstimates <- function(result,
 
   labels <- c(
     "outcome_cohort_name", "denominator_count", "outcome_count", "person_days", y, ymin, ymax,
-    "incidence_start_date", "incidence_end_date", "prevalence_start_date", "prevalence_end_date"
+    "incidence_start_date", "incidence_end_date", "prevalence_start_date", "prevalence_end_date",
+    "window_start_days", "window_end_days", "interval_number"
   )
   labels <- labels[labels %in% colnames(result)]
 
@@ -548,6 +630,21 @@ availablePrevalenceGrouping <- function(result, varying = FALSE) {
   omopgenerics::assertLogical(varying, length = 1)
   result <- omopgenerics::validateResultArgument(result) |>
     omopgenerics::filterSettings(.data$result_type == "prevalence")
+  availableGrouping(result, varying)
+}
+
+#' Variables that can be used for faceting and colouring rolling incidence plots
+#'
+#' @param result Rolling incidence results
+#' @param varying If FALSE, only variables with non-unique values will be
+#' returned, otherwise all available variables will be returned
+#'
+#' @export
+#'
+availableRollingIncidenceGrouping <- function(result, varying = FALSE) {
+  omopgenerics::assertLogical(varying, length = 1)
+  result <- omopgenerics::validateResultArgument(result) |>
+    omopgenerics::filterSettings(.data$result_type == "rolling_incidence")
   availableGrouping(result, varying)
 }
 

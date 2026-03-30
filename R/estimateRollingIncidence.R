@@ -349,7 +349,7 @@ estimateRollingIncidence <- function(cdm,
           dplyr::mutate(outcome_prev_end_date = dplyr::if_else(
             is.na(.data$outcome_prev_end_date),
             as.Date(.data$outcome_prev_end_date),
-            .data$outcome_prev_end_date + as.difftime(.env$washoutPlusOne, units = "days")
+            as.Date(clock::add_days(.data$outcome_prev_end_date, .env$washoutPlusOne))
           )) %>%
           dplyr::mutate(risk_start_date = dplyr::if_else(
             is.na(.data$outcome_prev_end_date) | (.data$risk_start_date > .data$outcome_prev_end_date),
