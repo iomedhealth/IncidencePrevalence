@@ -344,44 +344,120 @@ estimateRollingIncidence <- function(cdm,
           dplyr::filter(is.na(.data$outcome_prev_end_date) & .data$risk_start_date <= .data$cohort_end_date)
       } else {
         washoutPlusOne <- as.integer(washout + 1)
-        studyPopOutcome <- studyPopOutcome %>%
-          dplyr::mutate(outcome_prev_end_date = as.Date(.data$outcome_prev_end_date)) %>%
-          dplyr::mutate(outcome_prev_end_date = dplyr::if_else(
-            is.na(.data$outcome_prev_end_date),
-            as.Date(.data$outcome_prev_end_date),
-            as.Date(clock::add_days(.data$outcome_prev_end_date, .env$washoutPlusOne))
-          )) %>%
-          dplyr::mutate(risk_start_date = dplyr::if_else(
-            is.na(.data$outcome_prev_end_date) | (.data$risk_start_date > .data$outcome_prev_end_date),
-            .data$risk_start_date,
-            .data$outcome_prev_end_date
-          )) %>%
-          dplyr::filter(.data$risk_start_date <= .data$cohort_end_date)
-
-        if (events == FALSE && sum(!is.na(studyPopOutcome %>% dplyr::pull(.data$outcome_start_date))) > 0) {
-          studyPopOutcome <- studyPopOutcome %>%
-            dplyr::group_by(.data$subject_id) %>%
-            dplyr::mutate(events_post = sum(dplyr::if_else(!is.na(.data$outcome_start_date), 1, 0), na.rm = TRUE))
-
-          studyPopOutcomeWH <- studyPopOutcome %>%
-            dplyr::group_by(.data$subject_id) %>%
-            dplyr::filter(.data$events_post == 0) %>%
-            dplyr::compute(
-              name = paste0(tablePrefix, "_inc_5d"),
-              temporary = FALSE,
-              overwrite = TRUE,
-              logPrefix = "IncidencePrevalence_estimateRollingIncidence_washout_"
-            )
-
-          studyPopOutcome <- dplyr::union_all(
-            studyPopOutcomeWH,
-            studyPopOutcome %>%
-              dplyr::filter(.data$events_post >= 1) %>%
-              dplyr::group_by(.data$subject_id) %>%
-              dplyr::filter(.data$risk_start_date == min(.data$risk_start_date, na.rm = TRUE)) %>%
-              dplyr::ungroup()
-          ) %>%
-            dplyr::select(-"events_post")
+        
+        # We need to iteratively filter the events to only keep valid ones,
+        # and base the next risk_start_date ONLY on the end date of the previous VALID event.
+        
+        studyPopOutcome_local <- studyPopOutcome %>%
+          dplyr::collect() %>%
+          dplyr::arrange(.data$subject_id, .data$outcome_start_date)
+        
+        if (nrow(studyPopOutcome_local) > 0) {
+          # Split by subject_id for faster sequential processing
+          split_pop <- split(studyPopOutcome_local, studyPopOutcome_local$subject_id)
+          
+          valid_pop_list <- lapply(split_pop, function(df) {
+            valid_rows <- list()
+            current_valid_end <- as.Date(NA)
+            
+            for (i in seq_len(nrow(df))) {
+              row <- df[i, ]
+              
+              if (i == 1) {
+                # First event is always valid if it's the first in the cohort period
+                # (Pre-cohort events are handled by outcome_prev_end_date from inc_1/inc_2)
+                if (!is.na(row$outcome_prev_end_date)) {
+                   row$risk_start_date <- as.Date(row$outcome_prev_end_date) + washoutPlusOne
+                }
+                
+                # Check if this first event is pushed outside the cohort
+                if (row$risk_start_date <= row$cohort_end_date) {
+                  valid_rows[[length(valid_rows) + 1]] <- row
+                  if (!is.na(row$outcome_start_date)) {
+                    current_valid_end <- row$outcome_start_date
+                  }
+                }
+              } else {
+                # Subsequent events: check against the LAST VALID event's end date
+                if (!is.na(current_valid_end)) {
+                   required_start <- current_valid_end + washoutPlusOne
+                   if (!is.na(row$outcome_start_date) && row$outcome_start_date >= required_start) {
+                     row$risk_start_date <- required_start
+                     if (row$risk_start_date <= row$cohort_end_date) {
+                       valid_rows[[length(valid_rows) + 1]] <- row
+                       current_valid_end <- row$outcome_start_date
+                     }
+                   }
+                } else {
+                   # If we somehow kept a row without an outcome (e.g. no more events), just append
+                   if (row$risk_start_date <= row$cohort_end_date) {
+                      valid_rows[[length(valid_rows) + 1]] <- row
+                   }
+                }
+              }
+            }
+            
+            if (length(valid_rows) > 0) {
+              return(dplyr::bind_rows(valid_rows))
+            } else {
+              return(NULL)
+            }
+          })
+          
+          # Combine back
+          valid_pop <- dplyr::bind_rows(valid_pop_list)
+          
+          if (nrow(valid_pop) > 0) {
+            # Filter repeated events if FALSE
+            if (events == FALSE) {
+              valid_pop <- valid_pop %>%
+                dplyr::group_by(.data$subject_id) %>%
+                dplyr::filter(.data$risk_start_date == min(.data$risk_start_date, na.rm = TRUE)) %>%
+                dplyr::ungroup()
+            }
+            
+            # Push back to database
+            # We use an intermediate to avoid db table locking issues if copying directly over
+            temp_name <- paste0(tablePrefix, "_inc_5d_temp")
+            
+                  db_con <- attr(cdm, "dbcon")
+                  if (is.null(db_con)) {
+                     # Fallback 2: using con
+                    db_con <- attr(cdm, "con")
+                  }
+                  if (is.null(db_con)) {
+                    db_con <- attr(cdm[[denominatorTable]], "dbcon")
+                  }
+                  if (is.null(db_con)) {
+                    db_con <- attr(cdm[[denominatorTable]], "con")
+                  }
+                  if (is.null(db_con)) {
+                    # Final fallback: connection source
+                    db_con <- cdm[[denominatorTable]]$src$con
+                  }
+                  if (is.null(db_con)) {
+                     # Last resort for standard mock cdms
+                     db_con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+                  }
+                  
+                  valid_pop_db <- dplyr::copy_to(
+                    dest = db_con,
+                    df = valid_pop,
+                    name = temp_name,
+                    overwrite = TRUE
+                  )
+                  
+                  # Must convert to a proper tbl so union_all works later
+                  if (!inherits(valid_pop_db, "tbl_sql")) {
+                     # fallback to just joining them as dataframes if it is local
+                     studyPopOutcome <- valid_pop
+                  } else {
+                     studyPopOutcome <- valid_pop_db
+                  }
+          } else {
+            # No valid outcomes after washout
+            studyPopOutcome <- studyPopOutcome %>% utils::head(0)
+          }
         }
       }
 
@@ -394,8 +470,8 @@ estimateRollingIncidence <- function(cdm,
     }
 
     studyPop <- studyPopNoOutcome %>%
-      dplyr::union_all(studyPopOutcome) %>%
-      dplyr::collect()
+      dplyr::collect() %>%
+      dplyr::union_all(studyPopOutcome %>% dplyr::collect())
 
     if (is.null(washout)) {
       working_reason <- "Apply washout - anyone with outcome prior to start excluded"

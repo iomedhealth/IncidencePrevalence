@@ -130,7 +130,7 @@ plotIncidence <- function(result,
 #' @export
 #'
 plotRollingIncidence <- function(result,
-                                 x = "window_start_days",
+                                 x = "interval_number",
                                  y = "incidence_100000_pys",
                                  line = TRUE,
                                  point = TRUE,
@@ -177,6 +177,17 @@ plotRollingIncidence <- function(result,
     }
   }
 
+  # Add analysis_interval to group if it exists to avoid overlapping artifacts
+  if ("analysis_interval" %in% colnames(resultTidy)) {
+    if (is.null(colour)) {
+      group <- "analysis_interval"
+    } else {
+      group <- c(colour, "analysis_interval")
+    }
+  } else {
+    group <- colour
+  }
+
   plotEstimates(
     result = resultTidy,
     x = x,
@@ -188,7 +199,8 @@ plotRollingIncidence <- function(result,
     ymax = ymax,
     facet = facet,
     colour = colour,
-    type = "rolling_incidence"
+    type = "rolling_incidence",
+    group = group
   )
 }
 
@@ -449,7 +461,8 @@ plotEstimates <- function(result,
                           ymax,
                           facet,
                           colour,
-                          type) {
+                          type,
+                          group = colour) {
   rlang::check_installed("ggplot2", reason = "for plot functions")
   rlang::check_installed("scales", reason = "for plot functions")
 
@@ -487,7 +500,7 @@ plotEstimates <- function(result,
     ymax = ymax,
     facet = facet,
     colour = colour,
-    group = colour,
+    group = group,
     label = labels
   )
 
